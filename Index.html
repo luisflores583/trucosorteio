@@ -1,0 +1,375 @@
+﻿<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <title>Sorteador de Torneio de Truco</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background-color: #d4f7d4; }
+    h1 { color: #333; }
+    #teams, #matches, #history, #controls { margin-bottom: 20px; }
+    input, button { padding: 5px; margin: 5px; }
+    .match { background-color: white; border: 1px solid #ccc; padding: 10px; margin-bottom: 5px; }
+    .highlight { background-color: yellow !important; }
+    .btn { cursor: pointer; }
+    .btn:focus { outline: 2px solid #4CAF50; background-color: #c8e6c9; }
+    .eliminated { color: red; text-decoration: line-through; }
+    .champion { font-weight: bold; color: green; font-size: 1.5em; animation: blink 1s infinite; }
+    @keyframes blink {
+      0% { opacity: 1; }
+      50% { opacity: 0.3; }
+      100% { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <h1>SORTEADOR DE TORNEIO DE TRUCO</h1>
+  <h1>Desenvolvido por Luis Flores</h1>
+
+  <div id="teams">
+    <input type="text" id="teamName" placeholder="Nome da equipe">
+    <button onclick="addTeam()">Adicionar Equipe</button>
+    <ul id="teamList"></ul>
+  </div>
+
+  <div id="controls">
+    <button onclick="sortMatches()">Sortear Confrontos</button>
+    <button onclick="undoLastAction()">Desfazer Última Ação</button>
+    <button onclick="downloadHistoryPDF()">Baixar Histórico PDF</button>
+    <button onclick="resetTournament()">Resetar Torneio</button>
+    <hr>
+    <div>
+      <input type="text" id="saveName" placeholder="Nome do torneio">
+      <button onclick="saveTournament()">Salvar Torneio</button>
+      <select id="savedTournaments"></select>
+      <button onclick="loadTournament()">Reabrir Torneio</button>
+      <button onclick="deleteTournament()">Excluir Torneio</button>
+    </div>
+  </div>
+
+  <div id="matches"></div>
+  <div id="history"></div>
+
+  <script>
+    let teams = [];
+    let matches = [];
+    let history = [];
+    let victories = {};
+    let defeats = {};
+    let matchId = 0;
+    let woGiven = {};
+    let phase = 1;
+
+    function addTeam() {
+      const name = document.getElementById("teamName").value.trim();
+      if (name && !teams.includes(name)) {
+        teams.push(name);
+        victories[name] = 0;
+        defeats[name] = 0;
+        woGiven[name] = 0;
+        updateTeamList();
+        document.getElementById("teamName").value = "";
+      }
+    }
+
+    function updateTeamList() {
+      document.getElementById("teamList").innerHTML = teams.map(name => {
+        const eliminated = defeats[name] >= 2;
+        return `<li class="${eliminated ? 'eliminated' : ''}">${name} - ${victories[name]}V/${defeats[name]}D</li>`;
+      }).join("");
+    }
+
+    function shuffle(array) {
+      for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+      }
+      return array;
+    }
+
+    function eligibleForMatch(team) {
+      return defeats[team] < 2;
+    }
+
+    function getPrefix(teamName) {
+      return teamName.split(" ")[0];
+    }
+
+    function sortMatches() {
+      let eligible = teams.filter(eligibleForMatch);
+
+      if (eligible.length === 1) {
+        document.getElementById("matches").innerHTML = `<div class="champion">🏆 CAMPEÃO: ${eligible[0]} 🏆</div>`;
+        return;
+      }
+
+      let faseTitle = `<h3>Fase ${phase++}</h3><ul>`;
+
+      if (history.length === 0) {
+        // Primeira fase - evitar confrontos entre prefixos iguais
+        shuffle(eligible);
+        let used = new Set();
+        let fase = [];
+        let allWO = eligible.every(t => woGiven[t] > 0);
+
+        while (eligible.length > 1) {
+          let a = eligible.shift();
+          let bIndex = eligible.findIndex(b => getPrefix(a) !== getPrefix(b));
+          if (bIndex !== -1) {
+            let b = eligible.splice(bIndex, 1)[0];
+            fase.push([a, b]);
+          } else {
+            eligible.push(a);
+            break;
+          }
+        }
+
+        if (eligible.length === 1) {
+          let woTeam = eligible[0];
+          if (woGiven[woTeam] === 0 || allWO) {
+            woGiven[woTeam]++;
+            victories[woTeam]++;
+            history.push({ matchId: matchId++, winner: woTeam, loser: "W.O.", phase: phase - 1 });
+          } else {
+            alert("Não foi possível sortear sem repetir W.O.");
+            return;
+          }
+        }
+        matches = fase.map(pair => {
+          const id = matchId++;
+          return { id, a: pair[0], b: pair[1], winner: null };
+        });
+      } else {
+        let invictos = eligible.filter(t => defeats[t] === 0);
+        let umaderrota = eligible.filter(t => defeats[t] === 1);
+
+        shuffle(invictos);
+        shuffle(umaderrota);
+
+        let fase = [];
+        let sobras = [];
+
+        if (invictos.length % 2 === 1 && umaderrota.length % 2 === 1) {
+          sobras.push(invictos.pop());
+          sobras.push(umaderrota.pop());
+          fase.push(sobras);
+        }
+
+        for (let i = 0; i < invictos.length - 1; i += 2) fase.push([invictos[i], invictos[i + 1]]);
+        for (let i = 0; i < umaderrota.length - 1; i += 2) fase.push([umaderrota[i], umaderrota[i + 1]]);
+
+        if (invictos.length % 2 === 1) sobras.push(invictos[invictos.length - 1]);
+        if (umaderrota.length % 2 === 1) sobras.push(umaderrota[umaderrota.length - 1]);
+
+        if (sobras.length === 1) {
+          let team = sobras[0];
+          let allWO = eligible.every(t => woGiven[t] > 0);
+          if (woGiven[team] === 0 || allWO) {
+            woGiven[team]++;
+            victories[team]++;
+            history.push({ matchId: matchId++, winner: team, loser: "W.O.", phase: phase - 1 });
+          } else {
+            alert("Equipe já recebeu um W.O. anteriormente. Sorteio não permitido.");
+            return;
+          }
+        }
+
+        matches = fase.map(pair => {
+          const id = matchId++;
+          return { id, a: pair[0], b: pair[1], winner: null };
+        });
+      }
+
+      renderMatches();
+      updateTeamList();
+      updateHistory();
+    }
+
+    function renderMatches() {
+      const container = document.getElementById("matches");
+      container.innerHTML = "";
+      matches.forEach(match => {
+        if (!match.winner) {
+          const div = document.createElement("div");
+          div.className = "match";
+          div.innerHTML = `
+            ${match.a} vs ${match.b}
+            <button class='btn' onclick="declareWinner(${match.id}, '${match.a}', this)">${match.a} Venceu</button>
+            <button class='btn' onclick="declareWinner(${match.id}, '${match.b}', this)">${match.b} Venceu</button>
+          `;
+          container.appendChild(div);
+        }
+      });
+    }
+
+    function declareWinner(id, winner, btn) {
+      const match = matches.find(m => m.id === id);
+      if (!match || match.winner) return;
+
+      match.winner = winner;
+      const loser = match.a === winner ? match.b : match.a;
+      victories[winner]++;
+      defeats[loser]++;
+      history.push({ matchId: id, winner, loser, phase: phase - 1 });
+
+      btn.classList.add("highlight");
+      renderMatches();
+      updateTeamList();
+      updateHistory();
+    }
+
+    function undoLastAction() {
+      const last = history.pop();
+      if (!last) return;
+      if (last.loser === "W.O.") {
+        victories[last.winner]--;
+        woGiven[last.winner]--;
+      } else {
+        victories[last.winner]--;
+        defeats[last.loser]--;
+        const match = matches.find(m => m.id === last.matchId);
+        if (match) match.winner = null;
+      }
+      renderMatches();
+      updateTeamList();
+      updateHistory();
+    }
+
+    function updateHistory() {
+      const div = document.getElementById("history");
+      let fases = {};
+      history.forEach(h => {
+        if (!fases[h.phase]) fases[h.phase] = [];
+        fases[h.phase].push(h);
+      });
+
+      div.innerHTML = "<h3>Histórico:</h3>" +
+        Object.keys(fases).sort((a, b) => a - b).map(fase => {
+          return `<h4>Fase ${fase}</h4><ul>` + fases[fase].map(h => `<li>${h.winner} venceu ${h.loser}</li>`).join("") + "</ul>";
+        }).join("");
+    }
+
+    function downloadHistoryPDF() {
+      let text = "Histórico de Partidas:\n\n";
+      let fases = {};
+      history.forEach(h => {
+        if (!fases[h.phase]) fases[h.phase] = [];
+        fases[h.phase].push(h);
+      });
+      Object.keys(fases).sort((a, b) => a - b).forEach(f => {
+        text += `Fase ${f}:\n`;
+        fases[f].forEach(h => text += `${h.winner} venceu ${h.loser}\n`);
+        text += "\n";
+      });
+      const blob = new Blob([text], { type: 'application/pdf' });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "historico.pdf";
+      link.click();
+    }
+
+    function resetTournament() {
+      if (!confirm("Tem certeza que deseja reiniciar o torneio?")) return;
+      teams = [];
+      matches = [];
+      history = [];
+      victories = {};
+      defeats = {};
+      woGiven = {};
+      matchId = 0;
+      phase = 1;
+      document.getElementById("teamList").innerHTML = "";
+      document.getElementById("matches").innerHTML = "";
+      document.getElementById("history").innerHTML = "";
+    }
+
+    function saveTournament() {
+      const name = document.getElementById("saveName").value.trim();
+      if (!name) {
+        alert("Informe um nome para o torneio.");
+        return;
+      }
+
+      const data = {
+        teams,
+        matches,
+        history,
+        victories,
+        defeats,
+        woGiven,
+        matchId,
+        phase
+      };
+
+      localStorage.setItem("torneio_" + name, JSON.stringify(data));
+      updateSavedList();
+      alert("Torneio salvo com sucesso!");
+    }
+
+    function loadTournament() {
+      const select = document.getElementById("savedTournaments");
+      const name = select.value;
+      if (!name) {
+        alert("Selecione um torneio para reabrir.");
+        return;
+      }
+
+      const data = localStorage.getItem("torneio_" + name);
+      if (!data) {
+        alert("Torneio não encontrado.");
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(data);
+        teams = parsed.teams || [];
+        matches = parsed.matches || [];
+        history = parsed.history || [];
+        victories = parsed.victories || {};
+        defeats = parsed.defeats || {};
+        woGiven = parsed.woGiven || {};
+        matchId = parsed.matchId || 0;
+        phase = parsed.phase || 1;
+
+        updateTeamList();
+        renderMatches();
+        updateHistory();
+        alert("Torneio carregado com sucesso!");
+      } catch (e) {
+        alert("Erro ao carregar o torneio.");
+      }
+    }
+
+    function deleteTournament() {
+      const select = document.getElementById("savedTournaments");
+      const name = select.value;
+      if (!name) {
+        alert("Selecione um torneio para excluir.");
+        return;
+      }
+
+      if (confirm(`Deseja realmente excluir o torneio "${name}"?`)) {
+        localStorage.removeItem("torneio_" + name);
+        updateSavedList();
+        alert("Torneio excluído.");
+      }
+    }
+
+    function updateSavedList() {
+      const select = document.getElementById("savedTournaments");
+      select.innerHTML = "";
+
+      Object.keys(localStorage)
+        .filter(key => key.startsWith("torneio_"))
+        .map(key => key.replace("torneio_", ""))
+        .forEach(name => {
+          const option = document.createElement("option");
+          option.value = name;
+          option.textContent = name;
+          select.appendChild(option);
+        });
+    }
+
+    window.onload = updateSavedList;
+  </script>
+</body>
+</html>
